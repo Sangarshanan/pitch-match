@@ -18,8 +18,15 @@ def get_detector():
     return SwiftF0(fmin=46.875, fmax=2093.75, confidence_threshold=0.9)
 
 def pitch_detect_from_file(file_path, detector):
-    """Detect pitch from audio file"""
-    result = detector.detect_from_file(file_path)
+    """Detect pitch from audio file (supports both local files and URLs)"""
+    if file_path.startswith('http'):
+        # For URLs, load audio data first then use detect_from_array
+        audio_data = load_audio_file(file_path)
+        result = detector.detect_from_array(audio_data, sample_rate=SAMPLE_RATE)
+    else:
+        # For local files, use detect_from_file directly
+        result = detector.detect_from_file(file_path)
+
     source_notes = segment_notes(
         result,
         split_semitone_threshold=0.8,
@@ -115,10 +122,23 @@ def show_pitch_analysis(detected_notes):
             st.write("---")
 
 def load_audio_file(file_path):
-    """Load audio file and convert to numpy array"""
+    """Load audio file and convert to numpy array (supports URLs)"""
     import librosa
-    # Load the target audio file
-    audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+    import requests
+    import io
+
+    if file_path.startswith('http'):
+        # For URLs, download the file and load from bytes
+        response = requests.get(file_path)
+        response.raise_for_status()  # Raise an error for bad status codes
+
+        # Create a file-like object from the response content
+        audio_bytes = io.BytesIO(response.content)
+        audio, sr = librosa.load(audio_bytes, sr=SAMPLE_RATE)
+    else:
+        # For local files, load directly
+        audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+
     return audio
 
 def create_overlaid_audio(target_file_path, user_recording):
@@ -270,11 +290,11 @@ def show_play_and_record():
 
     # Determine file path based on current round
     if round_name == 'piano':
-        file_path = f"media/piano/{note}3.wav"
+        file_path = f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/piano/{note.lower()}3.wav"
         next_round = 'vocal'
         instruction = "Listen to the piano note, then try to match it with your voice"
     else:
-        file_path = f"media/voice/{note}3_Bass.mp3"
+        file_path = f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/voice/{note}3_Bass.mp3"
         next_round = None
         instruction = "Listen to the vocal sample, then try to match it"
 
@@ -285,8 +305,7 @@ def show_play_and_record():
     st.subheader("🎵 Play Target Audio")
 
     if st.button("▶️ Play Audio", type="primary", use_container_width=True):
-        with open(file_path, "rb") as audio_file:
-            st.audio(audio_file.read(), autoplay=True)
+        st.audio(file_path, autoplay=True)
 
     # Load target notes for comparison
     if st.session_state.target_notes is None:
@@ -452,7 +471,7 @@ def show_simple_results():
         with col1:
             st.write("**Target Piano + Your Recording (Overlaid):**")
             # Create overlaid audio for piano
-            piano_overlaid = create_overlaid_audio(f"media/piano/{note}3.wav", st.session_state.piano_recording)
+            piano_overlaid = create_overlaid_audio(f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/piano/{note}3.wav", st.session_state.piano_recording)
             st.audio(piano_overlaid, sample_rate=SAMPLE_RATE)
 
         with col2:
@@ -473,7 +492,7 @@ def show_simple_results():
         with col1:
             st.write("**Target Vocal + Your Recording (Overlaid):**")
             # Create overlaid audio for vocal
-            vocal_overlaid = create_overlaid_audio(f"media/voice/{note}3_Bass.mp3", st.session_state.vocal_recording)
+            vocal_overlaid = create_overlaid_audio(f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/voice/{note}3_Bass.mp3", st.session_state.vocal_recording)
             st.audio(vocal_overlaid, sample_rate=SAMPLE_RATE)
 
         with col2:
