@@ -1,10 +1,10 @@
 import streamlit as st
-import sounddevice as sd
 import numpy as np
 import pyworld as pw
 from swift_f0 import SwiftF0, segment_notes
-import os
+from audio_recorder_streamlit import audio_recorder
 import time
+import io
 
 # Configuration
 SAMPLE_RATE = 44100
@@ -61,38 +61,6 @@ def calculate_pitch_accuracy(recorded_segments, target_segments):
     accuracy = max(0, 100 - (avg_error / 12 * 100))
     return accuracy
 
-def record_audio_3_seconds():
-    """Record exactly 3 seconds of audio automatically"""
-    progress_container = st.empty()
-    status_container = st.empty()
-
-    status_container.info("🎤 Recording... Speak now!")
-
-    # Record for exactly 3 seconds
-    audio_data = sd.rec(
-        int(3 * SAMPLE_RATE),
-        samplerate=SAMPLE_RATE,
-        channels=CHANNELS,
-        dtype='float32'
-    )
-
-    # Show countdown
-    for i in range(30):  # 30 updates over 3 seconds (10 per second)
-        progress = (i + 1) / 30
-        remaining = 3 - (i + 1) / 10
-        progress_container.progress(progress, f"Recording... {remaining:.1f}s remaining")
-        time.sleep(0.1)
-
-    # Wait for recording to finish
-    sd.wait()
-
-    progress_container.success("Recording completed!")
-    status_container.empty()
-
-    # Flatten to 1D array
-    audio_flat = audio_data.flatten()
-
-    return audio_flat
 
 def midi_to_note_name(midi_number):
     """Convert MIDI number to note name"""
@@ -124,17 +92,14 @@ def show_pitch_analysis(detected_notes):
 def load_audio_file(file_path):
     """Load audio file and convert to numpy array (supports URLs)"""
     import librosa
-    import requests
+    import urllib.request
     import io
 
     if file_path.startswith('http'):
         # For URLs, download the file and load from bytes
-        response = requests.get(file_path)
-        response.raise_for_status()  # Raise an error for bad status codes
-
-        # Create a file-like object from the response content
-        audio_bytes = io.BytesIO(response.content)
-        audio, sr = librosa.load(audio_bytes, sr=SAMPLE_RATE)
+        with urllib.request.urlopen(file_path) as response:
+            audio_bytes = io.BytesIO(response.read())
+            audio, sr = librosa.load(audio_bytes, sr=SAMPLE_RATE)
     else:
         # For local files, load directly
         audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
@@ -313,11 +278,29 @@ def show_play_and_record():
 
     st.write("")
     st.subheader("🎤 Record Your Voice")
+    st.write("Click the microphone to start recording.")
 
-    # Simple button for automatic 3-second recording
-    if st.button("🎤 Record for 3 Seconds", type="primary", use_container_width=True):
-        # Record automatically for 3 seconds
-        audio_array = record_audio_3_seconds()
+    # Use audio-recorder-streamlit
+    audio_bytes = audio_recorder(
+        text="",
+        recording_color="#e8b62c",
+        neutral_color="#6aa36f",
+        icon_name="microphone",
+        icon_size="2x",
+        pause_threshold=1.0,  # Stop recording 1 seconds after speech ends
+        sample_rate=SAMPLE_RATE,
+        energy_threshold=0.01,  # Adjust sensitivity as needed
+        key=f"audio_recorder_{round_name}"  # Unique key for each round
+    )
+
+    if audio_bytes and (
+        (round_name == 'piano' and st.session_state.piano_recording is None) or
+        (round_name == 'vocal' and st.session_state.vocal_recording is None)
+    ):
+        # Convert bytes to numpy array
+        import librosa
+        audio_io = io.BytesIO(audio_bytes)
+        audio_array, sr = librosa.load(audio_io, sr=SAMPLE_RATE, mono=True)
 
         # Store recording and validate it has notes
         if round_name == 'piano':
@@ -394,11 +377,26 @@ def show_corrected_round():
 
     st.write("")
     st.subheader("🎤 Record Your Voice")
+    st.write("Click the microphone to start recording.")
 
-    # Recording section for matching corrected audio
-    if st.button("🎤 Record for 3 Seconds", type="primary", use_container_width=True):
-        # Record automatically for 3 seconds
-        audio_array = record_audio_3_seconds()
+    # Use audio-recorder-streamlit
+    audio_bytes = audio_recorder(
+        text="",
+        recording_color="#e8b62c",
+        neutral_color="#6aa36f",
+        icon_name="microphone",
+        icon_size="2x",
+        pause_threshold=1.0,  # Stop recording 1 second after speech ends
+        sample_rate=SAMPLE_RATE,
+        energy_threshold=0.01,  # Adjust sensitivity as needed
+        key="audio_recorder_corrected"  # Unique key for corrected recording
+    )
+
+    if audio_bytes and st.session_state.corrected_recording is None:
+        # Convert bytes to numpy array
+        import librosa
+        audio_io = io.BytesIO(audio_bytes)
+        audio_array, sr = librosa.load(audio_io, sr=SAMPLE_RATE, mono=True)
 
         st.session_state.corrected_recording = audio_array
         # Validate corrected recording has detectable notes
@@ -471,7 +469,7 @@ def show_simple_results():
         with col1:
             st.write("**Target Piano + Your Recording (Overlaid):**")
             # Create overlaid audio for piano
-            piano_overlaid = create_overlaid_audio(f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/piano/{note}3.wav", st.session_state.piano_recording)
+            piano_overlaid = create_overlaid_audio(f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/piano/{note.lower()}3.wav", st.session_state.piano_recording)
             st.audio(piano_overlaid, sample_rate=SAMPLE_RATE)
 
         with col2:
