@@ -7,4 +7,4 @@ matplotlib>=3.7.0
 setuptools>=65.0.0
 wheel>=0.40.0
 librosa==0.11.0
-audio-recorder-streamlit
+streamlit-audiorec==0.1.3

@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 import pyworld as pw
 from swift_f0 import SwiftF0, segment_notes
-from audio_recorder_streamlit import audio_recorder
+from st_audiorec import st_audiorec
 import time
 import io
 
@@ -233,15 +233,15 @@ def main():
 
 def show_key_selection():
     st.title("♪ Pitch Match")
-    st.subheader("Choose a Key")
+    st.subheader("Choose a Note")
 
-    st.write("Select a musical key to practice pitch matching:")
+    st.write("Select a musical note to practice pitch matching:")
 
     # Create buttons for each note in a grid layout
     cols = st.columns(7)
     for i, note in enumerate(NOTES):
         with cols[i]:
-            if st.button(f"**{note}**", key=f"note_{note}", use_container_width=True):
+            if st.button(f"**{note}3**", key=f"note_{note}", use_container_width=True):
                 st.session_state.selected_note = note
                 st.session_state.game_state = 'play_and_record'
                 st.session_state.current_round = 'piano'
@@ -256,11 +256,9 @@ def show_play_and_record():
     # Determine file path based on current round
     if round_name == 'piano':
         file_path = f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/piano/{note.lower()}3.wav"
-        next_round = 'vocal'
         instruction = "Listen to the piano note, then try to match it with your voice"
     else:
         file_path = f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/voice/{note}3_Bass.mp3"
-        next_round = None
         instruction = "Listen to the vocal sample, then try to match it"
 
     st.write(instruction)
@@ -268,9 +266,7 @@ def show_play_and_record():
 
     # Audio play box
     st.subheader("🎵 Play Target Audio")
-
-    if st.button("▶️ Play Audio", type="primary", use_container_width=True):
-        st.audio(file_path, autoplay=True)
+    st.audio(file_path)
 
     # Load target notes for comparison
     if st.session_state.target_notes is None:
@@ -278,64 +274,77 @@ def show_play_and_record():
 
     st.write("")
     st.subheader("🎤 Record Your Voice")
-    st.write("Click the microphone to start recording.")
+    st.write("Click the microphone to start recording, then click STOP when finished.")
 
-    # Use audio-recorder-streamlit
-    audio_bytes = audio_recorder(
-        text="",
-        recording_color="#e8b62c",
-        neutral_color="#6aa36f",
-        icon_name="microphone",
-        icon_size="2x",
-        pause_threshold=1.0,  # Stop recording 1 seconds after speech ends
-        sample_rate=SAMPLE_RATE,
-        energy_threshold=0.01,  # Adjust sensitivity as needed
-        key=f"audio_recorder_{round_name}"  # Unique key for each round
-    )
+    # Use separate audio recorders for each round
+    if round_name == 'piano':
+        wav_audio_data = st_audiorec()  # Piano recorder
+        recording_key = "piano_raw_recording"
+        processed_key = "piano_recording"
+    else:  # vocal round
+        wav_audio_data = st_audiorec()  # Vocal recorder
+        recording_key = "vocal_raw_recording"
+        processed_key = "vocal_recording"
 
-    if audio_bytes and (
-        (round_name == 'piano' and st.session_state.piano_recording is None) or
-        (round_name == 'vocal' and st.session_state.vocal_recording is None)
-    ):
-        # Convert bytes to numpy array
-        import librosa
-        audio_io = io.BytesIO(audio_bytes)
-        audio_array, sr = librosa.load(audio_io, sr=SAMPLE_RATE, mono=True)
+    if wav_audio_data is not None:
+        # Check if audio has meaningful content
+        try:
+            import librosa
+            audio_io = io.BytesIO(wav_audio_data)
+            audio_array, sr = librosa.load(audio_io, sr=SAMPLE_RATE, mono=True)
 
-        # Store recording and validate it has notes
-        if round_name == 'piano':
-            st.session_state.piano_recording = audio_array
-            # Validate piano recording has detectable notes
-            detected_notes = pitch_detect_from_array(audio_array, st.session_state.detector, SAMPLE_RATE)
-            if len(detected_notes) == 0:
-                st.error("🚫 No clear pitch detected in recording. Please try again and speak/sing louder.")
-                st.session_state.piano_recording = None
-                time.sleep(2)
+            if len(audio_array) > 0 and np.max(np.abs(audio_array)) > 1e-6:
+                # Store the raw recording
+                st.session_state[recording_key] = audio_array
+        except:
+            pass
+
+    # Show Done button if we have a recording but haven't processed it yet
+    if (recording_key in st.session_state and
+        st.session_state[recording_key] is not None and
+        st.session_state.get(processed_key) is None):
+
+
+        if st.button("✅ Done - Process Recording", type="primary", use_container_width=True):
+            try:
+                audio_array = st.session_state[recording_key]
+
+                # Process and validate the recording
+                detected_notes = pitch_detect_from_array(audio_array, st.session_state.detector, SAMPLE_RATE)
+
+                if len(detected_notes) == 0:
+                    st.error("🚫 No clear pitch detected in recording. Please record again and speak/sing louder.")
+                    # Clear the raw recording so user can try again
+                    del st.session_state[recording_key]
+                    st.rerun()
+                else:
+                    # Store the processed recording
+                    st.session_state[processed_key] = audio_array
+                    st.success(f"✅ {round_name.title()} recording successful! Detected {len(detected_notes)} note(s)")
+                    # Show pitch analysis
+                    show_pitch_analysis(detected_notes)
+                    st.rerun()
+
+            except Exception as e:
+                st.error(f"🚫 Error processing audio: {str(e)}")
+                # Clear the raw recording so user can try again
+                if recording_key in st.session_state:
+                    del st.session_state[recording_key]
                 st.rerun()
-            else:
-                st.success(f"✅ Piano recording successful! Detected {len(detected_notes)} note(s)")
-                # Show pitch analysis for piano recordings too
-                show_pitch_analysis(detected_notes)
-        else:
-            st.session_state.vocal_recording = audio_array
-            # Validate vocal recording has detectable notes
-            detected_notes = pitch_detect_from_array(audio_array, st.session_state.detector, SAMPLE_RATE)
-            if len(detected_notes) == 0:
-                st.error("🚫 No clear pitch detected in recording. Please try again and speak/sing louder.")
-                st.session_state.vocal_recording = None
-                time.sleep(2)
-                st.rerun()
-            else:
-                st.success(f"✅ Vocal recording successful! Detected {len(detected_notes)} note(s)")
-                # Show pitch analysis for vocal recordings
-                show_pitch_analysis(detected_notes)
+
+    # Show pitch analysis if recording is processed
+    elif st.session_state.get(processed_key) is not None:
+        audio_array = st.session_state[processed_key]
+        detected_notes = pitch_detect_from_array(audio_array, st.session_state.detector, SAMPLE_RATE)
+        st.success(f"✅ {round_name.title()} recording successful! Detected {len(detected_notes)} note(s)")
+        show_pitch_analysis(detected_notes)
 
     # Show next button if recording is successful
-    if round_name == 'piano' and st.session_state.piano_recording is not None:
+    if round_name == 'piano' and st.session_state.get('piano_recording') is not None:
         if st.button("➡️ Next: Vocal Round", type="primary", use_container_width=True):
             st.session_state.current_round = 'vocal'
             st.rerun()
-    elif round_name == 'vocal' and st.session_state.vocal_recording is not None:
+    elif round_name == 'vocal' and st.session_state.get('vocal_recording') is not None:
         if st.button("🔧 Next: Corrected Round", type="primary", use_container_width=True):
             # Generate pitch-corrected audio
             vocal_notes = pitch_detect_from_array(st.session_state.vocal_recording, st.session_state.detector, SAMPLE_RATE)
@@ -358,11 +367,17 @@ def show_play_and_record():
         st.session_state.piano_recording = None
         st.session_state.vocal_recording = None
         st.session_state.target_notes = None
+        # Also clear raw recordings
+        if 'piano_raw_recording' in st.session_state:
+            del st.session_state['piano_raw_recording']
+        if 'vocal_raw_recording' in st.session_state:
+            del st.session_state['vocal_raw_recording']
         st.session_state.game_state = 'select_key'
         st.rerun()
 
 def show_corrected_round():
     note = st.session_state.selected_note
+
     st.title(f"♪ {note}3 - Pitch-Corrected")
 
     st.write("Listen to your pitch-corrected voice, then try to match it!")
@@ -372,47 +387,74 @@ def show_corrected_round():
 
     if st.session_state.shifted_audio is not None:
         # Play the pitch-corrected audio
-        if st.button("▶️ Play Corrected Audio", type="primary", use_container_width=True):
-            st.audio(st.session_state.shifted_audio, sample_rate=SAMPLE_RATE, autoplay=True)
+        st.audio(st.session_state.shifted_audio, sample_rate=SAMPLE_RATE)
 
     st.write("")
     st.subheader("🎤 Record Your Voice")
-    st.write("Click the microphone to start recording.")
+    st.write("Click the microphone to start recording, then click STOP when finished.")
 
-    # Use audio-recorder-streamlit
-    audio_bytes = audio_recorder(
-        text="",
-        recording_color="#e8b62c",
-        neutral_color="#6aa36f",
-        icon_name="microphone",
-        icon_size="2x",
-        pause_threshold=1.0,  # Stop recording 1 second after speech ends
-        sample_rate=SAMPLE_RATE,
-        energy_threshold=0.01,  # Adjust sensitivity as needed
-        key="audio_recorder_corrected"  # Unique key for corrected recording
-    )
+    # Use separate audio recorder for corrected round
+    corrected_wav_audio_data = st_audiorec()  # Corrected recorder
 
-    if audio_bytes and st.session_state.corrected_recording is None:
-        # Convert bytes to numpy array
-        import librosa
-        audio_io = io.BytesIO(audio_bytes)
-        audio_array, sr = librosa.load(audio_io, sr=SAMPLE_RATE, mono=True)
+    # Store raw recording data in session state
+    recording_key = "corrected_raw_recording"
+    processed_key = "corrected_recording"
 
-        st.session_state.corrected_recording = audio_array
-        # Validate corrected recording has detectable notes
+    if corrected_wav_audio_data is not None:
+        # Check if audio has meaningful content
+        try:
+            import librosa
+            audio_io = io.BytesIO(corrected_wav_audio_data)
+            audio_array, sr = librosa.load(audio_io, sr=SAMPLE_RATE, mono=True)
+
+            if len(audio_array) > 0 and np.max(np.abs(audio_array)) > 1e-6:
+                # Store the raw recording
+                st.session_state[recording_key] = audio_array
+        except:
+            pass
+
+    # Show Done button if we have a recording but haven't processed it yet
+    if (recording_key in st.session_state and
+        st.session_state[recording_key] is not None and
+        st.session_state.get(processed_key) is None):
+
+
+        if st.button("✅ Done - Process Recording", type="primary", use_container_width=True):
+            try:
+                audio_array = st.session_state[recording_key]
+
+                # Process and validate the recording
+                detected_notes = pitch_detect_from_array(audio_array, st.session_state.detector, SAMPLE_RATE)
+
+                if len(detected_notes) == 0:
+                    st.error("🚫 No clear pitch detected in recording. Please record again and speak/sing louder.")
+                    # Clear the raw recording so user can try again
+                    del st.session_state[recording_key]
+                    st.rerun()
+                else:
+                    # Store the processed recording
+                    st.session_state[processed_key] = audio_array
+                    st.success(f"✅ Corrected recording successful! Detected {len(detected_notes)} note(s)")
+                    # Show pitch analysis
+                    show_pitch_analysis(detected_notes)
+                    st.rerun()
+
+            except Exception as e:
+                st.error(f"🚫 Error processing audio: {str(e)}")
+                # Clear the raw recording so user can try again
+                if recording_key in st.session_state:
+                    del st.session_state[recording_key]
+                st.rerun()
+
+    # Show pitch analysis if recording is processed
+    elif st.session_state.get(processed_key) is not None:
+        audio_array = st.session_state[processed_key]
         detected_notes = pitch_detect_from_array(audio_array, st.session_state.detector, SAMPLE_RATE)
-        if len(detected_notes) == 0:
-            st.error("🚫 No clear pitch detected in recording. Please try again and speak/sing louder.")
-            st.session_state.corrected_recording = None
-            time.sleep(2)
-            st.rerun()
-        else:
-            st.success(f"✅ Corrected recording successful! Detected {len(detected_notes)} note(s)")
-            # Show pitch analysis for corrected recordings
-            show_pitch_analysis(detected_notes)
+        st.success(f"✅ Corrected recording successful! Detected {len(detected_notes)} note(s)")
+        show_pitch_analysis(detected_notes)
 
     # Show results button if recording is successful
-    if st.session_state.corrected_recording is not None:
+    if st.session_state.get('corrected_recording') is not None:
         if st.button("📊 View Results", type="primary", use_container_width=True):
             st.session_state.game_state = 'results'
             st.rerun()
@@ -426,6 +468,13 @@ def show_corrected_round():
         st.session_state.corrected_recording = None
         st.session_state.target_notes = None
         st.session_state.shifted_audio = None
+        # Also clear raw recordings
+        if 'piano_raw_recording' in st.session_state:
+            del st.session_state['piano_raw_recording']
+        if 'vocal_raw_recording' in st.session_state:
+            del st.session_state['vocal_raw_recording']
+        if 'corrected_raw_recording' in st.session_state:
+            del st.session_state['corrected_raw_recording']
         st.session_state.game_state = 'select_key'
         st.rerun()
 
@@ -467,10 +516,11 @@ def show_simple_results():
         col1, col2 = st.columns(2)
 
         with col1:
-            st.write("**Target Piano + Your Recording (Overlaid):**")
-            # Create overlaid audio for piano
-            piano_overlaid = create_overlaid_audio(f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/piano/{note.lower()}3.wav", st.session_state.piano_recording)
-            st.audio(piano_overlaid, sample_rate=SAMPLE_RATE)
+            st.write("**Target Piano:**")
+            st.audio(f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/piano/{note.lower()}3.wav")
+
+            st.write("**Your Recording:**")
+            st.audio(st.session_state.piano_recording, sample_rate=SAMPLE_RATE)
 
         with col2:
             st.metric("Piano Match Accuracy", f"{piano_accuracy:.1f}%")
@@ -478,8 +528,10 @@ def show_simple_results():
                 # Show what you sang vs target
                 user_note = midi_to_note_name(piano_notes[0].pitch_midi)
                 target_note = midi_to_note_name(st.session_state.target_notes[0].pitch_midi)
-                st.write(f"**You sang:** {user_note}")
-                st.write(f"**Target:** {target_note}")
+                user_freq = 440 * (2 ** ((piano_notes[0].pitch_midi - 69) / 12))
+                target_freq = 440 * (2 ** ((st.session_state.target_notes[0].pitch_midi - 69) / 12))
+                st.write(f"**You sang:** {user_note} ({user_freq:.1f} Hz)")
+                st.write(f"**Target:** {target_note} ({target_freq:.1f} Hz)")
 
         st.write("---")
 
@@ -488,10 +540,11 @@ def show_simple_results():
         col1, col2 = st.columns(2)
 
         with col1:
-            st.write("**Target Vocal + Your Recording (Overlaid):**")
-            # Create overlaid audio for vocal
-            vocal_overlaid = create_overlaid_audio(f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/voice/{note}3_Bass.mp3", st.session_state.vocal_recording)
-            st.audio(vocal_overlaid, sample_rate=SAMPLE_RATE)
+            st.write("**Target Vocal:**")
+            st.audio(f"https://github.com/Sangarshanan/pitch-match/raw/refs/heads/main/media/voice/{note}3_Bass.mp3")
+
+            st.write("**Your Recording:**")
+            st.audio(st.session_state.vocal_recording, sample_rate=SAMPLE_RATE)
 
         with col2:
             st.metric("Vocal Match Accuracy", f"{vocal_accuracy:.1f}%")
@@ -499,8 +552,10 @@ def show_simple_results():
                 # Show what you sang vs target
                 user_note = midi_to_note_name(vocal_notes[0].pitch_midi)
                 target_note = midi_to_note_name(st.session_state.target_notes[0].pitch_midi)
-                st.write(f"**You sang:** {user_note}")
-                st.write(f"**Target:** {target_note}")
+                user_freq = 440 * (2 ** ((vocal_notes[0].pitch_midi - 69) / 12))
+                target_freq = 440 * (2 ** ((st.session_state.target_notes[0].pitch_midi - 69) / 12))
+                st.write(f"**You sang:** {user_note} ({user_freq:.1f} Hz)")
+                st.write(f"**Target:** {target_note} ({target_freq:.1f} Hz)")
 
         st.write("---")
 
@@ -509,10 +564,11 @@ def show_simple_results():
         col1, col2 = st.columns(2)
 
         with col1:
-            st.write("**Corrected Voice + Your Recording (Overlaid):**")
-            # Create overlaid audio for corrected voice
-            corrected_overlaid = create_overlaid_audio_arrays(st.session_state.shifted_audio, st.session_state.corrected_recording)
-            st.audio(corrected_overlaid, sample_rate=SAMPLE_RATE)
+            st.write("**Target (Pitch-Corrected Voice):**")
+            st.audio(st.session_state.shifted_audio, sample_rate=SAMPLE_RATE)
+
+            st.write("**Your Recording:**")
+            st.audio(st.session_state.corrected_recording, sample_rate=SAMPLE_RATE)
 
         with col2:
             st.metric("Corrected Match Accuracy", f"{corrected_accuracy:.1f}%")
@@ -520,8 +576,10 @@ def show_simple_results():
                 # Show what you sang vs corrected target
                 user_note = midi_to_note_name(corrected_notes[0].pitch_midi)
                 target_note = midi_to_note_name(shifted_notes[0].pitch_midi)
-                st.write(f"**You sang:** {user_note}")
-                st.write(f"**Target:** {target_note}")
+                user_freq = 440 * (2 ** ((corrected_notes[0].pitch_midi - 69) / 12))
+                target_freq = 440 * (2 ** ((shifted_notes[0].pitch_midi - 69) / 12))
+                st.write(f"**You sang:** {user_note} ({user_freq:.1f} Hz)")
+                st.write(f"**Target:** {target_note} ({target_freq:.1f} Hz)")
 
         st.write("---")
 
@@ -551,6 +609,13 @@ def show_simple_results():
         st.session_state.corrected_recording = None
         st.session_state.target_notes = None
         st.session_state.shifted_audio = None
+        # Also clear raw recordings
+        if 'piano_raw_recording' in st.session_state:
+            del st.session_state['piano_raw_recording']
+        if 'vocal_raw_recording' in st.session_state:
+            del st.session_state['vocal_raw_recording']
+        if 'corrected_raw_recording' in st.session_state:
+            del st.session_state['corrected_raw_recording']
         st.session_state.current_round = 'piano'
         st.session_state.game_state = 'play_and_record'
         st.rerun()
@@ -563,6 +628,13 @@ def show_simple_results():
         st.session_state.target_notes = None
         st.session_state.shifted_audio = None
         st.session_state.selected_note = None
+        # Also clear raw recordings
+        if 'piano_raw_recording' in st.session_state:
+            del st.session_state['piano_raw_recording']
+        if 'vocal_raw_recording' in st.session_state:
+            del st.session_state['vocal_raw_recording']
+        if 'corrected_raw_recording' in st.session_state:
+            del st.session_state['corrected_raw_recording']
         st.session_state.current_round = 'piano'
         st.session_state.game_state = 'select_key'
         st.rerun()
