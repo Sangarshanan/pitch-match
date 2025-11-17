@@ -71,7 +71,8 @@ def midi_to_note_name(midi_number):
 
 def show_pitch_analysis(detected_notes):
     """Show simple pitch analysis - note and frequency only"""
-    st.subheader("🎵 Your Recording")
+    if len(detected_notes) > 0:
+        st.subheader("🎵 Your Recording")
 
     for i, note in enumerate(detected_notes):
         # Convert MIDI to frequency
@@ -320,7 +321,6 @@ def show_play_and_record():
                 else:
                     # Store the processed recording
                     st.session_state[processed_key] = audio_array
-                    st.success(f"✅ {round_name.title()} recording successful! Detected {len(detected_notes)} note(s)")
                     # Show pitch analysis
                     show_pitch_analysis(detected_notes)
                     st.rerun()
@@ -336,7 +336,6 @@ def show_play_and_record():
     elif st.session_state.get(processed_key) is not None:
         audio_array = st.session_state[processed_key]
         detected_notes = pitch_detect_from_array(audio_array, st.session_state.detector, SAMPLE_RATE)
-        st.success(f"✅ {round_name.title()} recording successful! Detected {len(detected_notes)} note(s)")
         show_pitch_analysis(detected_notes)
 
     # Show next button if recording is successful
@@ -434,7 +433,6 @@ def show_corrected_round():
                 else:
                     # Store the processed recording
                     st.session_state[processed_key] = audio_array
-                    st.success(f"✅ Corrected recording successful! Detected {len(detected_notes)} note(s)")
                     # Show pitch analysis
                     show_pitch_analysis(detected_notes)
                     st.rerun()
@@ -450,7 +448,6 @@ def show_corrected_round():
     elif st.session_state.get(processed_key) is not None:
         audio_array = st.session_state[processed_key]
         detected_notes = pitch_detect_from_array(audio_array, st.session_state.detector, SAMPLE_RATE)
-        st.success(f"✅ Corrected recording successful! Detected {len(detected_notes)} note(s)")
         show_pitch_analysis(detected_notes)
 
     # Show results button if recording is successful
